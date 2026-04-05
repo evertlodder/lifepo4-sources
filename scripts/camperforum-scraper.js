@@ -1,10 +1,14 @@
 /**
- * camperforum-scraper.js (v3 — CORRECT DOMAIN)
+ * camperforum-scraper.js (FINAL — Forum Listing Approach)
  * 
- * Scrapes LiFePO4 Q&A from Camperforum.be (phpBB forum)
- * DOMAIN FIX: camperforum.be (not .nl)
- * Base URL: https://camperforum.be (no www, no /forum path)
- * Search endpoint: /search.php
+ * Scrapes LiFePO4 Q&A from Camperforum.be by parsing forum listing pages
+ * No search, no JavaScript, no authentication needed
+ * 
+ * Approach:
+ * 1. Fetch camperforum.be/viewforum.php?f=10 (Elektronica forum)
+ * 2. Parse thread titles from HTML with cheerio
+ * 3. Paginate through results (&start=0, &start=25, etc.)
+ * 4. Fetch each thread individually and extract Q&A
  */
 
 const fetch = require('node-fetch');
@@ -12,12 +16,12 @@ const cheerio = require('cheerio');
 
 class CamperforumScraper {
   constructor() {
-    // CORRECTED: camperforum.be (not .nl)
     this.baseUrl = 'https://camperforum.be';
-    this.searchPath = '/search.php';
+    this.forumId = 10; // Elektronica forum
     this.results = [];
     this.stats = {
-      threads_fetched: 0,
+      forum_pages_fetched: 0,
+      threads_visited: 0,
       qa_pairs_extracted: 0,
       errors: 0
     };
@@ -25,48 +29,14 @@ class CamperforumScraper {
   }
 
   /**
-   * Search for LiFePO4 threads using POST to /search.php
+   * Fetch and parse forum listing page
    */
-  async search(query, pages = 3) {
-    console.log(`\n📍 Searching Camperforum.be for: "${query}"`);
-    console.log(`   Pages: ${pages}`);
-
-    for (let page = 1; page <= pages; page++) {
-      try {
-        await this.fetchSearchPage(query, page);
-        // Rate limiting: 1 second between requests
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch (err) {
-        console.error(`  ❌ Error fetching page ${page}:`, err.message);
-        this.stats.errors++;
-      }
-    }
-  }
-
-  /**
-   * Fetch single search results page via POST
-   */
-  async fetchSearchPage(query, pageNum) {
-    // Build form data for POST to search.php
-    const formData = new URLSearchParams();
-    formData.append('keywords', query);
-    formData.append('fid', '10'); // 10 = Elektronica (electronics) forum
-    formData.append('sc', '1'); // search topics
-    formData.append('st', 'p'); // Plaatsingstijd (date) sort
-    formData.append('sf', 'd'); // sort descending
-    formData.append('sr', 'all'); // all posts
-    formData.append('start', (pageNum - 1) * 25); // Assuming 25 results per page
-
-    const searchUrl = `${this.baseUrl}${this.searchPath}`;
+  async fetchForumListingPage(startIndex) {
+    const forumUrl = `${this.baseUrl}/viewforum.php?f=${this.forumId}&start=${startIndex}`;
 
     try {
-      const response = await fetch(searchUrl, {
-        method: 'POST',
-        headers: {
-          'User-Agent': this.userAgent,
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: formData.toString()
+      const response = await fetch(forumUrl, {
+        headers: { 'User-Agent': this.userAgent }
       });
 
       if (!response.ok) {
@@ -76,45 +46,41 @@ class CamperforumScraper {
       const html = await response.text();
       const $ = cheerio.load(html);
 
-      // Parse search results (phpBB structure)
-      const threadRows = $('a[href*="viewtopic.php"]');
+      // Parse thread links from forum listing
+      // phpBB structure: threads are in <a href="viewtopic.php?..."> links
+      const threadLinks = $('a[href*="viewtopic.php"]');
+      
+      const threads = [];
+      for (const link of threadLinks) {
+        const $link = $(link);
+        const href = $link.attr('href');
+        const title = $link.text().trim();
 
-      console.log(`  Page ${pageNum}: Found ${threadRows.length} results`);
+        // Filter out navigation/button links
+        if (href && href.includes('viewtopic.php') && title.length > 5) {
+          // Get full URL if relative
+          const threadUrl = href.startsWith('http') 
+            ? href 
+            : `${this.baseUrl}/${href}`;
 
-      if (threadRows.length === 0) {
-        console.log(`  ⚠️  No results found`);
-        return;
-      }
-
-      for (const link of threadRows) {
-        let threadUrl = $(link).attr('href');
-        const threadTitle = $(link).text().trim();
-
-        if (threadUrl && threadTitle.length > 5) {
-          // FIX: Ensure URL is absolute — remove leading dot if present
-          if (!threadUrl.startsWith('http')) {
-            // Make sure no double slashes or extra dots
-            threadUrl = threadUrl.replace(/^\.+/, ''); // Remove leading dots
-            threadUrl = threadUrl.replace(/^\/+/, '/'); // Normalize leading slashes
-            threadUrl = `${this.baseUrl}${threadUrl}`;
-          }
-
-          // Extract Q&A from thread
-          await this.fetchThread(threadUrl, threadTitle);
-
-          // Rate limiting: 500ms between thread requests
-          await new Promise(resolve => setTimeout(resolve, 500));
+          threads.push({ url: threadUrl, title });
         }
       }
 
+      this.stats.forum_pages_fetched++;
+      console.log(`  📄 Page (start=${startIndex}): Found ${threads.length} threads`);
+
+      return threads;
+
     } catch (err) {
-      console.error(`  ❌ Search request failed: ${err.message}`);
+      console.error(`  ❌ Error fetching forum page: ${err.message}`);
       this.stats.errors++;
+      return [];
     }
   }
 
   /**
-   * Fetch single thread and extract Q&A
+   * Fetch individual thread and extract Q&A
    */
   async fetchThread(threadUrl, threadTitle) {
     try {
@@ -136,18 +102,18 @@ class CamperforumScraper {
         return;
       }
 
-      // Extract answer from first post
-      const firstPost = $('div.postbody, div.post-content, div.post, article').first();
+      // Extract first post (answer)
+      // phpBB: posts are in <div class="postbody"> or similar
+      const postContent = $('div.postbody, div.post-content, article').first();
 
-      if (firstPost.length === 0) {
+      if (postContent.length === 0) {
         return;
       }
 
-      let answerText = firstPost.text();
-
-      // Remove quotes if this is a response
+      let answerText = postContent.text();
       answerText = answerText
         .replace(/^Quote.*?$/gm, '')
+        .replace(/\[quote\].*?\[\/quote\]/gis, '')
         .trim();
 
       const answer = this.cleanText(answerText);
@@ -156,10 +122,11 @@ class CamperforumScraper {
         return;
       }
 
-      // Extract metadata
-      const authorElem = $('strong.username, .post-author, .author').first();
+      // Extract author
+      const authorElem = $('strong.username, .post-author, dt').first();
       const author = authorElem.text().trim() || 'Anonymous';
 
+      // Extract timestamp
       const dateElem = $('time, .post-date, .datetime').first();
       const timestamp = dateElem.attr('datetime') || new Date().toISOString();
 
@@ -170,12 +137,12 @@ class CamperforumScraper {
         source_url: threadUrl,
         author,
         timestamp,
-        confidence: 0.80,
+        confidence: 0.85,
         extracted_at: new Date().toISOString()
       });
 
       this.stats.qa_pairs_extracted++;
-      console.log(`    ✅ Extracted: "${question.substring(0, 40)}..."`);
+      console.log(`    ✅ Q&A: "${question.substring(0, 50)}..."`);
 
     } catch (err) {
       console.log(`    ⚠️  Thread skipped: ${err.message}`);
@@ -190,7 +157,6 @@ class CamperforumScraper {
       text.length > 30 &&
       text.length < 3000 &&
       !text.includes('[deleted]') &&
-      !text.includes('Quote') &&
       (text.toLowerCase().includes('battery') ||
        text.toLowerCase().includes('lifepo4') ||
        text.toLowerCase().includes('lfp') ||
@@ -204,7 +170,7 @@ class CamperforumScraper {
   }
 
   /**
-   * Clean HTML text
+   * Clean text (remove HTML, normalize whitespace)
    */
   cleanText(text) {
     return text
@@ -212,6 +178,7 @@ class CamperforumScraper {
       .replace(/&nbsp;/g, ' ')
       .replace(/&quot;/g, '"')
       .replace(/&amp;/g, '&')
+      .replace(/\[.*?\]/g, '') // Remove BBCode
       .replace(/\n+/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
@@ -219,23 +186,36 @@ class CamperforumScraper {
   }
 
   /**
-   * Run scraper
+   * Run scraper — fetch forum listing pages and extract Q&A
    */
-  async scrapeAll() {
-    console.log('🚀 Starting Camperforum.be Scraper (v3 — Domain Fixed)');
-    console.log('   Pattern: phpBB forums (scales to German, Italian, etc.)\n');
+  async scrapeAll(maxPages = 3) {
+    console.log('🚀 Starting Camperforum.be Scraper (Forum Listing Approach)');
+    console.log(`   Forum: Elektronica (f=${this.forumId})`);
+    console.log(`   Pages: ${maxPages}\n`);
 
-    const queries = [
-      'lifepo4',
-      'lfp batterij',
-      'lithium iron phosphate',
-      'lifepo4 camper',
-      'solar lifepo4'
-    ];
+    for (let page = 0; page < maxPages; page++) {
+      const startIndex = page * 25; // Camperforum uses 25 results per page
 
-    for (const query of queries) {
-      await this.search(query, 2);
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      console.log(`\n📍 Fetching forum page ${page + 1} (start=${startIndex})`);
+
+      // Fetch forum listing page
+      const threads = await this.fetchForumListingPage(startIndex);
+
+      if (threads.length === 0) {
+        console.log(`   No more threads found. Stopping.`);
+        break;
+      }
+
+      // Extract Q&A from each thread
+      for (const thread of threads) {
+        await this.fetchThread(thread.url, thread.title);
+        this.stats.threads_visited++;
+        // Rate limiting: 300ms between threads
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+
+      // Rate limiting: 1s between forum pages
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
     return this.results;
@@ -258,20 +238,20 @@ module.exports = CamperforumScraper;
 if (require.main === module) {
   (async () => {
     const scraper = new CamperforumScraper();
-    const results = await scraper.scrapeAll();
-    
+    const results = await scraper.scrapeAll(2); // Fetch first 2 pages
+
     console.log('\n' + '='.repeat(60));
     console.log('✅ SCRAPING COMPLETE');
     console.log('='.repeat(60));
     console.log('\nStatistics:');
     console.log(JSON.stringify(scraper.getStats(), null, 2));
-    
+
     if (results.length > 0) {
       console.log('\n📊 Sample Q&A Pairs:');
       results.slice(0, 3).forEach((qa, i) => {
         console.log(`\n[${i + 1}] Q: ${qa.question.substring(0, 60)}...`);
         console.log(`    A: ${qa.answer.substring(0, 60)}...`);
-        console.log(`    Source: ${qa.source_url.substring(0, 50)}...`);
+        console.log(`    Author: ${qa.author}`);
       });
     }
   })().catch(err => {
