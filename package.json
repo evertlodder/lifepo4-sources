@@ -1,0 +1,43 @@
+{
+  "name": "lifepo4-knowledge-base",
+  "version": "2.0.0-poc",
+  "description": "LiFePO4 Battery Q&A Knowledge Base - Global Forum Mining",
+  "type": "commonjs",
+  "main": "scripts/mine-forums-global-v2-FILTERED.js",
+  "scripts": {
+    "mine": "node scripts/mine-forums-global-v2-FILTERED.js",
+    "mine:reddit-only": "REDDIT_ONLY=true node scripts/mine-forums-global-v2-FILTERED.js",
+    "mine:camperforum-only": "CAMPERFORUM_ONLY=true node scripts/mine-forums-global-v2-FILTERED.js",
+    "validate": "node scripts/validate-qa-output.js",
+    "test": "node scripts/test-chemistry-detection.js",
+    "lint": "eslint scripts/ || true",
+    "setup-reddit": "echo 'Go to https://www.reddit.com/prefs/apps and create an app with script type. Then set REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_REFRESH_TOKEN'"
+  },
+  "keywords": [
+    "lifepo4",
+    "lfp",
+    "battery",
+    "solar",
+    "energy",
+    "qa",
+    "web-scraping",
+    "knowledge-base"
+  ],
+  "author": "Evert Lodder",
+  "license": "MIT",
+  "dependencies": {
+    "snoowrap": "^1.23.0",
+    "node-fetch": "^2.7.0",
+    "cheerio": "^1.0.0-rc.12",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "eslint": "^8.56.0",
+    "jest": "^29.7.0",
+    "@types/node": "^20.10.6"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+
