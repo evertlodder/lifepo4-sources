@@ -25,12 +25,16 @@ jobs:
           npm ci
           npm install --save axios cheerio
       
+      - name: 📁 Create output directory
+        run: mkdir -p output
+      
       - name: 🚀 Run forum mining orchestrator
         run: |
           node scripts/mine-forums-global-v2-FILTERED.js
       
       - name: 💾 Upload results artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: forum-qa-output
           path: output/lifepo4-qa-*.json
