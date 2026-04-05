@@ -1,14 +1,10 @@
 /**
- * camperforum-scraper.js (v2 — FIXED URLS)
+ * camperforum-scraper.js (v3 — CORRECT DOMAIN)
  * 
- * Scrapes LiFePO4 Q&A from Camperforum.nl (phpBB forum)
- * URL FIX: Base is https://camperforum.nl (no www, no /forum path)
- * Search endpoint: /search.php (not /forum/index.php?do=search)
- * 
- * Extracts:
- * - Thread title → question
- * - First/best post → answer
- * - Metadata: author, post count, date
+ * Scrapes LiFePO4 Q&A from Camperforum.be (phpBB forum)
+ * DOMAIN FIX: camperforum.be (not .nl)
+ * Base URL: https://camperforum.be (no www, no /forum path)
+ * Search endpoint: /search.php
  */
 
 const fetch = require('node-fetch');
@@ -16,8 +12,8 @@ const cheerio = require('cheerio');
 
 class CamperforumScraper {
   constructor() {
-    // FIX: No www, no /forum — direct root
-    this.baseUrl = 'https://camperforum.nl';
+    // CORRECTED: camperforum.be (not .nl)
+    this.baseUrl = 'https://camperforum.be';
     this.searchPath = '/search.php';
     this.results = [];
     this.stats = {
@@ -32,7 +28,7 @@ class CamperforumScraper {
    * Search for LiFePO4 threads using POST to /search.php
    */
   async search(query, pages = 3) {
-    console.log(`\n📍 Searching Camperforum.nl for: "${query}"`);
+    console.log(`\n📍 Searching Camperforum.be for: "${query}"`);
     console.log(`   Pages: ${pages}`);
 
     for (let page = 1; page <= pages; page++) {
@@ -81,28 +77,30 @@ class CamperforumScraper {
       const $ = cheerio.load(html);
 
       // Parse search results (phpBB structure)
-      // Try multiple selectors for compatibility
       const threadRows = $('a[href*="viewtopic.php"]');
 
       console.log(`  Page ${pageNum}: Found ${threadRows.length} results`);
 
       if (threadRows.length === 0) {
-        console.log(`  ⚠️  No results found (forum may require query adjustment)`);
+        console.log(`  ⚠️  No results found`);
         return;
       }
 
       for (const link of threadRows) {
-        const threadUrl = $(link).attr('href');
+        let threadUrl = $(link).attr('href');
         const threadTitle = $(link).text().trim();
 
         if (threadUrl && threadTitle.length > 5) {
-          // Convert relative URL to absolute if needed
-          const absoluteUrl = threadUrl.startsWith('http') 
-            ? threadUrl 
-            : `${this.baseUrl}${threadUrl}`;
+          // FIX: Ensure URL is absolute — remove leading dot if present
+          if (!threadUrl.startsWith('http')) {
+            // Make sure no double slashes or extra dots
+            threadUrl = threadUrl.replace(/^\.+/, ''); // Remove leading dots
+            threadUrl = threadUrl.replace(/^\/+/, '/'); // Normalize leading slashes
+            threadUrl = `${this.baseUrl}${threadUrl}`;
+          }
 
           // Extract Q&A from thread
-          await this.fetchThread(absoluteUrl, threadTitle);
+          await this.fetchThread(threadUrl, threadTitle);
 
           // Rate limiting: 500ms between thread requests
           await new Promise(resolve => setTimeout(resolve, 500));
@@ -139,7 +137,6 @@ class CamperforumScraper {
       }
 
       // Extract answer from first post
-      // phpBB post selectors — try multiple patterns
       const firstPost = $('div.postbody, div.post-content, div.post, article').first();
 
       if (firstPost.length === 0) {
@@ -150,7 +147,7 @@ class CamperforumScraper {
 
       // Remove quotes if this is a response
       answerText = answerText
-        .replace(/^Quote.*?$/gm, '') // Remove quoted sections
+        .replace(/^Quote.*?$/gm, '')
         .trim();
 
       const answer = this.cleanText(answerText);
@@ -169,7 +166,7 @@ class CamperforumScraper {
       this.results.push({
         question,
         answer,
-        source: 'Camperforum.nl',
+        source: 'Camperforum.be',
         source_url: threadUrl,
         author,
         timestamp,
@@ -194,7 +191,6 @@ class CamperforumScraper {
       text.length < 3000 &&
       !text.includes('[deleted]') &&
       !text.includes('Quote') &&
-      // Must be technical or experience-based
       (text.toLowerCase().includes('battery') ||
        text.toLowerCase().includes('lifepo4') ||
        text.toLowerCase().includes('lfp') ||
@@ -208,11 +204,11 @@ class CamperforumScraper {
   }
 
   /**
-   * Clean HTML text (remove tags, normalize whitespace)
+   * Clean HTML text
    */
   cleanText(text) {
     return text
-      .replace(/<[^>]+>/g, '') // Remove HTML tags
+      .replace(/<[^>]+>/g, '')
       .replace(/&nbsp;/g, ' ')
       .replace(/&quot;/g, '"')
       .replace(/&amp;/g, '&')
@@ -226,10 +222,9 @@ class CamperforumScraper {
    * Run scraper
    */
   async scrapeAll() {
-    console.log('🚀 Starting Camperforum.nl Scraper (v2 — Fixed URLs)');
+    console.log('🚀 Starting Camperforum.be Scraper (v3 — Domain Fixed)');
     console.log('   Pattern: phpBB forums (scales to German, Italian, etc.)\n');
 
-    // Search queries in Dutch
     const queries = [
       'lifepo4',
       'lfp batterij',
@@ -239,8 +234,7 @@ class CamperforumScraper {
     ];
 
     for (const query of queries) {
-      await this.search(query, 2); // 2 pages per query for PoC
-      // Wait between queries
+      await this.search(query, 2);
       await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
