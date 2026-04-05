@@ -253,3 +253,29 @@ class CamperforumScraper {
 }
 
 module.exports = CamperforumScraper;
+
+// Run scraper if this is the main module
+if (require.main === module) {
+  (async () => {
+    const scraper = new CamperforumScraper();
+    const results = await scraper.scrapeAll();
+    
+    console.log('\n' + '='.repeat(60));
+    console.log('✅ SCRAPING COMPLETE');
+    console.log('='.repeat(60));
+    console.log('\nStatistics:');
+    console.log(JSON.stringify(scraper.getStats(), null, 2));
+    
+    if (results.length > 0) {
+      console.log('\n📊 Sample Q&A Pairs:');
+      results.slice(0, 3).forEach((qa, i) => {
+        console.log(`\n[${i + 1}] Q: ${qa.question.substring(0, 60)}...`);
+        console.log(`    A: ${qa.answer.substring(0, 60)}...`);
+        console.log(`    Source: ${qa.source_url.substring(0, 50)}...`);
+      });
+    }
+  })().catch(err => {
+    console.error('❌ Fatal error:', err.message);
+    process.exit(1);
+  });
+}
